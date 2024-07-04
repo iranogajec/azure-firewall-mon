@@ -1,4 +1,4 @@
-import { Component, OnInit, Testability } from '@angular/core';
+import { Component, OnInit, HostListener, ElementRef, AfterViewInit, ViewChild } from '@angular/core';
 
 import { IFirewallSource, FirewallDataRow, ModelService } from '../services/model.service';
 import { DemoSourceService } from '../services/demo-source.service';
@@ -12,14 +12,24 @@ import { TableVirtualScrollDataSource } from 'ng-table-virtual-scroll';
 import { Router } from '@angular/router';
 import { YesnoDialogComponent } from '../yesno-dialog/yesno-dialog.component';
 import { LoggingService } from '../services/logging.service';
+import { time } from 'console';
+import { formatDate } from '@angular/common';
+
+
+enum TimestampFormat { GMT, local};
 
 @Component({
   selector: 'app-main-page',
   templateUrl: './main-page.component.html',
   styleUrls: ['./main-page.component.scss']
 })
-export class MainPageComponent implements OnInit {
+export class MainPageComponent implements AfterViewInit, OnInit {
+  @ViewChild('searchInput') searchInput!: ElementRef;
   private firewallSource: IFirewallSource;
+
+  ngAfterViewInit() {
+    this.searchInput.nativeElement.focus();
+  }
 
   constructor(
     private model: ModelService,
@@ -38,36 +48,77 @@ export class MainPageComponent implements OnInit {
 
       this.toggleExpandJsonSpace();
   }
-  
+
+  @HostListener('document:keypress', ['$event'])
+
+  handleKeyboardEvent(event: KeyboardEvent) { 
+    if (event.key === 'Enter') {
+      this.advSearchVisibility = false;
+       this.searchInput.nativeElement.blur();
+    }
+
+    // avoid handling keypress events when typing in input fields
+    if (event.target instanceof HTMLInputElement || 
+      event.target instanceof HTMLTextAreaElement || 
+      event.target instanceof HTMLSelectElement) {
+    return;
+  }
+
+    this.advSearchVisibility = !this.advSearchVisibility;
+
+    if (this.advSearchVisibility) {
+      this.searchInput.nativeElement.focus();  
+    }
+  }
+
   private onDataSourceChanged(data: Array<FirewallDataRow>) {
     this.dataSource = new TableVirtualScrollDataSource(data); 
     this.dataSource.filterPredicate = (data: FirewallDataRow, filter: string) => {
       
         try {
-          if (filter == null || filter.length == 0)
-          return true;
-    
-        var words = filter.toLowerCase().split(" ");
-        var foundWords:number = 0;
-    
-        for (var i = 0; i < words.length; i++) {
-          var word = words[i];
-          if (word.length > 0 && 
-            data.time?.toLowerCase().includes(word) || 
-            data.category?.toLowerCase().includes(word) || 
-            data.protocol?.toLowerCase().includes(word) || 
-            data.sourceip?.toLowerCase().includes(word) || 
-            data.srcport?.toLowerCase().includes(word) || 
-            data.targetip?.toLowerCase().includes(word) || 
-            data.targetport?.toLowerCase().includes(word) || 
-            data.policy?.toLowerCase().includes(word) ||
-            data.moreInfo?.toLowerCase().includes(word) ||
-            data.action?.toLowerCase().includes(word))
-          {
-            foundWords++;
+          if (this.timestampFilterMinutes > 0) {
+            if (data.time == null || data.time.length == 0)
+              return false;
+
+            var now = new Date();
+            var date = new Date(data.time);
+
+            var diff = now.getTime() - date.getTime();
+            var minutes = diff / 60000;
+            if (minutes > this.timestampFilterMinutes)
+              return false;
           }
-          else
-            return false;
+
+          if (this.timestampFilterMinutes == -1) {
+            var currentString =  formatDate(data.time, 'yyyy-MM-ddTHH:mm', 'en_US');
+            if (currentString < this.timestampStartDateString || currentString > this.timestampEndDateString)
+              return false;
+          }
+
+          if (filter == null || filter.length == 0)
+            return true;
+
+          var words = filter.toLowerCase().split(" ");
+          var foundWords:number = 0;
+      
+          for (var i = 0; i < words.length; i++) {
+            var word = words[i];
+            if (word.length > 0 && 
+              //data.time?.toLowerCase().includes(word) || 
+              data.category?.toLowerCase().includes(word) || 
+              data.protocol?.toLowerCase().includes(word) || 
+              data.sourceip?.toLowerCase().includes(word) || 
+              data.srcport?.toLowerCase().includes(word) || 
+              data.targetip?.toLowerCase().includes(word) || 
+              data.targetport?.toLowerCase().includes(word) || 
+              data.policy?.toLowerCase().includes(word) ||
+              data.moreInfo?.toLowerCase().includes(word) ||
+              data.action?.toLowerCase().includes(word))
+            {
+              foundWords++;
+            }
+            else
+              return false;
         }
     
         return true;
@@ -76,7 +127,7 @@ export class MainPageComponent implements OnInit {
           return true;
         } 
     };
-    this.dataSource.filter = this.filterText;
+    this.dataSource.filter = " " + this.filterText;; // not empty filter string forces filterPredicate to be called
     this.totalRows = data.length;
     this.visibleRows = this.dataSource.filteredData.length;
   }
@@ -134,11 +185,10 @@ export class MainPageComponent implements OnInit {
 }
 
   filterTextChanged(): void {
-    this.dataSource.filter = this.filterText;
+    this.dataSource.filter = " " + this.filterText; // not empty filter string forces filterPredicate to be called
     this.dataSource.filteredData.length;
     this.visibleRows = this.dataSource.filteredData.length;
   }
-
 
   public displayedColumns = ['time', 'category', 'protocol','source','target', 'action', 'policy', 'targetUrl'];
   public dataSource: TableVirtualScrollDataSource<FirewallDataRow> = new TableVirtualScrollDataSource(new Array<FirewallDataRow>());
@@ -146,6 +196,7 @@ export class MainPageComponent implements OnInit {
   public filterText: string = "";
   public totalRows: number = 0;
   public visibleRows: number = 0;
+  public advSearchVisibility = false;
   public message: string = "";
   public selectedRow: FirewallDataRow|null = null;
   public selectedRowJson: string|null = null;
@@ -153,10 +204,11 @@ export class MainPageComponent implements OnInit {
   public jsontextHeight: string = "";
 
   public panelOpenState = false;
-
-  public now(): string {
-    return Date.now().toString();
-  }
+  public timestampFormat: TimestampFormat = TimestampFormat.GMT;
+  public timestampFilterMinutes: number = 0;
+  public timestampStartDateString: String = formatDate(new Date(), 'yyyy-MM-ddTHH:mm', 'en_US');
+  public timestampEndDateString: String = formatDate(new Date(), 'yyyy-MM-ddTHH:mm', 'en_US');
+  
 
   public setActionBackground(action: string): string {
     
@@ -262,7 +314,23 @@ export class MainPageComponent implements OnInit {
     
     return !this.isInternalIP(ip);
   }
+
+  public isTimestampLocal() {
+    return this.timestampFormat == TimestampFormat.local;
+  }
+
+  public isTimestampGMT() {
+    return this.timestampFormat == TimestampFormat.GMT;
+  }
+
+  public setTimestampLocal() {
+    this.timestampFormat = TimestampFormat.local;
+  }
   
+  public setTimeStampGMT() {
+    this.timestampFormat = TimestampFormat.GMT;
+  }
+
   public getFlagFromIP(ip: string): FlagData | undefined{
     if (!this.isIP(ip))
       return undefined;
@@ -341,5 +409,22 @@ export class MainPageComponent implements OnInit {
       this.jsontextHeight = values[1];
     else
       this.jsontextHeight = values[0];
+  }
+
+  public showTimestamp(timestamp: string): string {
+    if (timestamp == null || timestamp.length == 0)
+      return "";
+
+    var returnString = "";
+    var date = new Date(timestamp);
+    if (this.timestampFormat == TimestampFormat.GMT)
+      returnString = timestamp;
+    else
+      returnString = date.toLocaleString() + " (Local)";
+  
+    if (this.timestampFilterMinutes != 0) {
+      returnString = "<b>" + returnString + "</b>";
+    }
+    return returnString;
   }
 } 
