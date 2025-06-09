@@ -1,8 +1,20 @@
 {
-    "navigationFallback": {
-      "rewrite": "/"
+  "routes": [
+    {
+      "route": "/*",
+      "allowedRoles": [
+        "authenticated"
+      ]
+    }
+  ],
+  "responseOverrides": {
+    "401": {
+      "redirect": "/.auth/login/aad?post_login_redirect_uri=.referrer",
+      "statusCode": 302
     },
-    "platform": {
-      "apiRuntime": "node:18"
+    "404": {
+      "redirect": "/",
+      "statusCode": 302
     }
   }
+}
